@@ -3,13 +3,12 @@ package main
 import (
 	"fmt"
 	"math/rand"
-	"strconv"
 	"strings"
 )
 
 // DNS question format as defined by RFC1035 4.1.2 -> https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.2
 type dnsQuestion struct {
-	QNAME  string
+	QNAME  []byte
 	QTYPE  int //https://datatracker.ietf.org/doc/html/rfc1035#section-3.2.2
 	QCLASS int //https://datatracker.ietf.org/doc/html/rfc1035#section-3.2.4
 }
@@ -22,22 +21,21 @@ func generateQueryID() int {
 	return rand.Intn(65535)
 }
 
-func encodeHost(host string) string {
+func encodeHost(host string) []byte {
 	// Produces an encoded string under the following format - https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.2
-	// QNAME = dns.google.com -> 3dns6google3com0
+	// QNAME = dns.google.com -> 3dns6google3com0 -> [3 100 110 115 6 103 111 111 103 108 101 3 99 111 109 0]
 
-	sections := strings.Split(host, ".")
-	sectionsEncoded := []string{}
+	result := []byte{}
 
-	for _, section := range sections {
-		length := len(section)
-		sectionsEncoded = append(sectionsEncoded, strconv.Itoa(length), section)
+	for _, section := range strings.Split(host, ".") {
+		result = append(result, byte(len(section)))
+		result = append(result, []byte(section)...)
 	}
 
-	sectionsEncoded = append(sectionsEncoded, strconv.Itoa(0))
-	sectionsEncodedAsString := strings.Join(sectionsEncoded, "")
+	// Append final 0 to represent end of domain name
+	result = append(result, byte(0))
 
-	return sectionsEncodedAsString
+	return result
 }
 
 func main() {
