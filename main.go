@@ -3,7 +3,9 @@ package main
 import (
 	"encoding/hex"
 	"fmt"
+	"log"
 	"math/rand"
+	"net"
 	"strings"
 )
 
@@ -133,7 +135,33 @@ func main() {
 		sendingQuestion.packQuestion(),
 	)
 
-	hex := sendingMessage.generateHex(message)
+	hexStr := sendingMessage.generateHex(message)
 
-	fmt.Println(hex)
+	fmt.Println("Initial hex:", hexStr)
+
+	addr := net.UDPAddr{
+		IP:   net.IPv4(8, 8, 8, 8),
+		Port: 53,
+	}
+
+	conn, err := net.DialUDP("udp", nil, &addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 1024)
+
+	_, err = conn.Write(message)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	n, err := conn.Read(buf)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	fmt.Println("Response Hex:", hex.EncodeToString(buf[:n]))
 }
