@@ -47,7 +47,7 @@ type dnsMessage struct {
 	question dnsQuestion
 }
 
-func (message *dnsMessage) packMessage(header[]byte, dnsQuestion[]byte) []byte {
+func (message *dnsMessage) packMessage(header []byte, dnsQuestion []byte) []byte {
 	var packedMessage []byte
 
 	packedMessage = append(packedMessage, header...)
@@ -58,15 +58,15 @@ func (message *dnsMessage) packMessage(header[]byte, dnsQuestion[]byte) []byte {
 
 func (message *dnsMessage) generateHex(bytes []byte) string {
 	var hexString string
-	
+
 	hexString = hex.EncodeToString(bytes)
 
 	return hexString
 }
 
-func packuint16Fields (fields []uint16) []byte {
+func packuint16Fields(fields []uint16) []byte {
 	var packedFields []byte
-	
+
 	for _, field := range fields {
 		packedFields = append(packedFields, uint16ToByteSlice(field)...)
 	}
@@ -115,16 +115,16 @@ func main() {
 
 	// Build out a static message, can be dynamic later...
 	sendingHeader := dnsHeader{
-		id:              22, // static for now but will need to be unique later call generateQueryID()
+		id:              22,  // static for now but will need to be unique later call generateQueryID()
 		flags:           256, // Setting the 'recursion desired' bit to 1 (8th bit) in uint16
 		numQuestions:    1,
 		numAnswers:      0,
 		numAuthorityRR:  0,
 		numAdditionalRR: 0,
 	}
-	
+
 	sendingMessage := dnsMessage{
-		header: sendingHeader,
+		header:   sendingHeader,
 		question: sendingQuestion,
 	}
 
