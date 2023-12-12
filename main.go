@@ -107,6 +107,34 @@ func uint16ToByteSlice(number uint16) []byte {
 	return slice
 }
 
+func sendMessage(message []byte) []byte {
+	addr := net.UDPAddr{
+		IP:   net.IPv4(8, 8, 8, 8),
+		Port: 53,
+	}
+
+	conn, err := net.DialUDP("udp", nil, &addr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer conn.Close()
+
+	buf := make([]byte, 64)
+
+	_, err = conn.Write(message)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	n, err := conn.Read(buf)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return (buf[:n])
+}
+
 func main() {
 	// Build out a static question for now, can be dynamic later...
 	sendingQuestion := dnsQuestion{
@@ -135,33 +163,9 @@ func main() {
 		sendingQuestion.packQuestion(),
 	)
 
-	hexStr := sendingMessage.generateHex(message)
+	fmt.Println("Sending bytes:", message)
 
-	fmt.Println("Initial hex:", hexStr)
+	response := sendMessage(message)
 
-	addr := net.UDPAddr{
-		IP:   net.IPv4(8, 8, 8, 8),
-		Port: 53,
-	}
-
-	conn, err := net.DialUDP("udp", nil, &addr)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer conn.Close()
-
-	buf := make([]byte, 1024)
-
-	_, err = conn.Write(message)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	n, err := conn.Read(buf)
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Response Hex:", hex.EncodeToString(buf[:n]))
+	fmt.Println("Response bytes:", response)
 }
