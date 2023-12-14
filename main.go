@@ -66,6 +66,16 @@ func (message *dnsMessage) generateHex(bytes []byte) string {
 	return hexString
 }
 
+// https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
+type dnsAnswer struct {
+	name        string
+	recordType  string
+	recordClass string
+	TTL         int
+	RDLength    string
+	RDData      int
+}
+
 func packuint16Fields(fields []uint16) []byte {
 	var packedFields []byte
 
@@ -105,6 +115,44 @@ func uint16ToByteSlice(number uint16) []byte {
 	slice[1] = byte(number)
 
 	return slice
+}
+
+func bytesToUint16(bytes []byte) uint16 {
+	if len(bytes) != 2 {
+		panic("Slice of invalid length passed to function, can not convert to uint16")
+	}
+
+	return uint16(bytes[0])<<8 | uint16(bytes[1])
+}
+
+func unpackReturnMessage(message []byte) string {
+	// The header is the first 12 bytes 
+	fmt.Println("---------HEADER-------------------------")
+	headerbytes := message[:12]
+	fmt.Println("Response Header Bytes:", headerbytes)
+
+	returnHeader := dnsHeader{
+		id:              bytesToUint16(headerbytes[:2]),
+		flags:           bytesToUint16(headerbytes[2:4]),
+		numQuestions:    bytesToUint16(headerbytes[4:6]),
+		numAnswers:      bytesToUint16(headerbytes[6:8]),
+		numAuthorityRR:  bytesToUint16(headerbytes[8:10]),
+		numAdditionalRR: bytesToUint16(headerbytes[10:12]),
+	}
+
+	fmt.Println("number of answers (expected two):", returnHeader.numAnswers)
+	fmt.Println("number of questions (expect one): ", returnHeader.numQuestions)
+	fmt.Println("ID of message (this is the ID we hard code):", returnHeader.id)
+	fmt.Println("ID of numAuthorityRR (expect 0):", returnHeader.numAuthorityRR)
+	fmt.Println("number of numAdditionalRR (expect 0):", returnHeader.numAdditionalRR)
+	fmt.Println("-----------------------------------------")
+
+	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
+	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
+	if returnHeader.flags < 32767 {
+		panic("No response from DNS server")
+	}
+	return ""
 }
 
 func sendMessage(message []byte) []byte {
@@ -168,4 +216,9 @@ func main() {
 	response := sendMessage(message)
 
 	fmt.Println("Response bytes:", response)
+
+	unpackedResponse := unpackReturnMessage(response)
+
+	fmt.Println(unpackedResponse)
+
 }
