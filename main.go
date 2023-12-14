@@ -165,11 +165,17 @@ func unpackReturnMessage(message []byte) string {
 
 	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes
 
-	fmt.Println(questionBytes)
-
 	question := message[12:(12 + questionBytes)]
-	fmt.Println(question)
-	
+
+
+	returnDNSQuestion := dnsQuestion{
+		qName: question[:len(question)  - 4],
+		qType: bytesToUint16(question[len(question)- 4:len(question) - 2]),
+		qClass: bytesToUint16(question[len(question)- 2:]),
+	}
+
+	fmt.Println(returnDNSQuestion.qName, returnDNSQuestion.qType, returnDNSQuestion.qClass)
+
 	return ""
 }
 
