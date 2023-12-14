@@ -167,7 +167,6 @@ func unpackReturnMessage(message []byte) string {
 
 	question := message[12:(12 + questionBytes)]
 
-
 	returnDNSQuestion := dnsQuestion{
 		qName: question[:len(question)  - 4],
 		qType: bytesToUint16(question[len(question)- 4:len(question) - 2]),
