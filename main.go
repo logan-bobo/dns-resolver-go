@@ -67,7 +67,7 @@ func (message *dnsMessage) generateHex(bytes []byte) string {
 }
 
 // https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
-type dnsAnswer struct {
+type resourceRecord struct {
 	name        string
 	recordType  string
 	recordClass string
@@ -126,7 +126,7 @@ func bytesToUint16(bytes []byte) uint16 {
 }
 
 func unpackReturnMessage(message []byte) string {
-	// The header is the first 12 bytes 
+	// The header is the first 12 bytes
 	headerbytes := message[:12]
 	fmt.Println("Response Header Bytes:", headerbytes)
 
@@ -152,7 +152,7 @@ func unpackReturnMessage(message []byte) string {
 	}
 
 	// The question is the encoded host we sent so to work out the question bytes in the response its the length of our initial question + 4
-	// as a domain must always end with a 0 padding byte to indicate the end of the domain for example 
+	// as a domain must always end with a 0 padding byte to indicate the end of the domain for example
 	// 3dns6google3com0 -> [3 100 110 115 6 103 111 111 103 108 101 3 99 111 109 0] we can find the first 0 byte at the end of the domain
 	returnQuestionInitial := message[12:]
 	shift := returnQuestionInitial[0]
@@ -168,13 +168,32 @@ func unpackReturnMessage(message []byte) string {
 	question := message[12:(12 + questionBytes)]
 
 	returnDNSQuestion := dnsQuestion{
-		qName: question[:len(question)  - 4],
-		qType: bytesToUint16(question[len(question)- 4:len(question) - 2]),
-		qClass: bytesToUint16(question[len(question)- 2:]),
+		qName:  question[:len(question)-4],
+		qType:  bytesToUint16(question[len(question)-4 : len(question)-2]),
+		qClass: bytesToUint16(question[len(question)-2:]),
 	}
 
 	fmt.Println(returnDNSQuestion.qName, returnDNSQuestion.qType, returnDNSQuestion.qClass)
 
+	initalAnswer := message[12+questionBytes:]
+
+	var answers [][]byte
+
+	seperator := len(initalAnswer)/int(returnHeader.numAnswers) - 1
+	count := 0
+	part := 0
+
+	for index, _ := range initalAnswer {
+		if count == seperator {
+			answers = append(answers, initalAnswer[part:index+1])
+			count = 0
+			part += seperator + 1
+			continue
+		}
+		count += 1
+	}
+
+	fmt.Println(answers)
 	return ""
 }
 
