@@ -127,7 +127,6 @@ func bytesToUint16(bytes []byte) uint16 {
 
 func unpackReturnMessage(message []byte) string {
 	// The header is the first 12 bytes 
-	fmt.Println("---------HEADER-------------------------")
 	headerbytes := message[:12]
 	fmt.Println("Response Header Bytes:", headerbytes)
 
@@ -145,13 +144,32 @@ func unpackReturnMessage(message []byte) string {
 	fmt.Println("ID of message (this is the ID we hard code):", returnHeader.id)
 	fmt.Println("ID of numAuthorityRR (expect 0):", returnHeader.numAuthorityRR)
 	fmt.Println("number of numAdditionalRR (expect 0):", returnHeader.numAdditionalRR)
-	fmt.Println("-----------------------------------------")
 
 	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
 	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
 	if returnHeader.flags < 32767 {
 		panic("No response from DNS server")
 	}
+
+	// The question is the encoded host we sent so to work out the question bytes in the response its the length of our initial question + 4
+	// as a domain must always end with a 0 padding byte to indicate the end of the domain for example 
+	// 3dns6google3com0 -> [3 100 110 115 6 103 111 111 103 108 101 3 99 111 109 0] we can find the first 0 byte at the end of the domain
+	returnQuestionInitial := message[12:]
+	shift := returnQuestionInitial[0]
+	questionBytes := 0
+
+	for shift != 0 {
+		questionBytes += int(shift) + 1
+		shift = returnQuestionInitial[questionBytes]
+	}
+
+	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes
+
+	fmt.Println(questionBytes)
+
+	question := message[12:(12 + questionBytes)]
+	fmt.Println(question)
+	
 	return ""
 }
 
