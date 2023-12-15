@@ -305,7 +305,7 @@ func main() {
 	unpackedResponses := unpackReturnMessage(response)
 
 	for _, unpackedResponse := range unpackedResponses {
-		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData, "\n")
+		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData)
 	}
 
 }
