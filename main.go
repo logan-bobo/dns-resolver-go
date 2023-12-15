@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -68,12 +69,14 @@ func (message *dnsMessage) generateHex(bytes []byte) string {
 
 // https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
 type resourceRecord struct {
+	// name is a compressed field see - https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.4
 	name        string
-	recordType  string
-	recordClass string
-	TTL         int
-	RDLength    string
-	RDData      int
+	recordType  uint16
+	recordClass uint16
+	// This will be how long we want to hold this data in memory for at some point so repeated resolutions do not do an upstream expensive network call
+	TTL      uint32
+	RDLength uint16
+	RDData   net.IP
 }
 
 func packuint16Fields(fields []uint16) []byte {
@@ -108,6 +111,33 @@ func encodeHost(host string) []byte {
 	return result
 }
 
+func decodeHost(encodedHost []byte) string {
+	var valueShifts []int
+	var domainParts []string
+
+	shift := encodedHost[0]
+	fqdnBytes := 0
+
+	for shift != 0 {
+		valueShifts = append(valueShifts, int(shift))
+		fqdnBytes += int(shift) + 1
+		shift = encodedHost[fqdnBytes]
+	}
+
+	sliceStart := 1
+
+	for _, valueShift := range valueShifts {
+		domainParts = append(domainParts, string(encodedHost[sliceStart:valueShift+sliceStart]))
+		sliceStart = sliceStart + valueShift + 1
+	}
+
+	return strings.Join(domainParts, ".")
+}
+
+func decodeIP(IP []byte) net.IP {
+	return net.IPv4(IP[0], IP[1], IP[2], IP[3])
+}
+
 func uint16ToByteSlice(number uint16) []byte {
 	// uint16 is represented in 2 bytes
 	slice := make([]byte, 2)
@@ -125,10 +155,10 @@ func bytesToUint16(bytes []byte) uint16 {
 	return uint16(bytes[0])<<8 | uint16(bytes[1])
 }
 
-func unpackReturnMessage(message []byte) string {
+// split this out
+func unpackReturnMessage(message []byte) []resourceRecord {
 	// The header is the first 12 bytes
 	headerbytes := message[:12]
-	fmt.Println("Response Header Bytes:", headerbytes)
 
 	returnHeader := dnsHeader{
 		id:              bytesToUint16(headerbytes[:2]),
@@ -138,12 +168,6 @@ func unpackReturnMessage(message []byte) string {
 		numAuthorityRR:  bytesToUint16(headerbytes[8:10]),
 		numAdditionalRR: bytesToUint16(headerbytes[10:12]),
 	}
-
-	fmt.Println("number of answers (expected two):", returnHeader.numAnswers)
-	fmt.Println("number of questions (expect one): ", returnHeader.numQuestions)
-	fmt.Println("ID of message (this is the ID we hard code):", returnHeader.id)
-	fmt.Println("ID of numAuthorityRR (expect 0):", returnHeader.numAuthorityRR)
-	fmt.Println("number of numAdditionalRR (expect 0):", returnHeader.numAdditionalRR)
 
 	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
 	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
@@ -165,16 +189,6 @@ func unpackReturnMessage(message []byte) string {
 
 	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes
 
-	question := message[12:(12 + questionBytes)]
-
-	returnDNSQuestion := dnsQuestion{
-		qName:  question[:len(question)-4],
-		qType:  bytesToUint16(question[len(question)-4 : len(question)-2]),
-		qClass: bytesToUint16(question[len(question)-2:]),
-	}
-
-	fmt.Println(returnDNSQuestion.qName, returnDNSQuestion.qType, returnDNSQuestion.qClass)
-
 	initalAnswer := message[12+questionBytes:]
 
 	var answers [][]byte
@@ -183,18 +197,51 @@ func unpackReturnMessage(message []byte) string {
 	count := 0
 	part := 0
 
-	for index, _ := range initalAnswer {
+	for index := range initalAnswer {
 		if count == seperator {
 			answers = append(answers, initalAnswer[part:index+1])
 			count = 0
 			part += seperator + 1
 			continue
 		}
+
 		count += 1
 	}
 
-	fmt.Println(answers)
-	return ""
+	var resourceRecords []resourceRecord
+
+	for _, answer := range answers {
+
+		// If the number is bigger than 49152 we know the first two bits are set and the message is compressed.
+		if binary.BigEndian.Uint16(answer[0:2]) > 49152 {
+			referenceDomain := binary.BigEndian.Uint16(answer[0:2]) - 49152 // The shift of 8bit (bytes) from start of the message the source domain this is our pointer.
+
+			fqdninitial := message[referenceDomain:]
+
+			shift := fqdninitial[0]
+			fqdnBytes := 0
+
+			for shift != 0 {
+				fqdnBytes += int(shift) + 1
+				shift = returnQuestionInitial[fqdnBytes]
+			}
+
+			fqdn := message[referenceDomain : (int(referenceDomain)+int(fqdnBytes))+1]
+
+			answerResourceRecord := resourceRecord{
+				name:        decodeHost(fqdn),
+				recordType:  binary.BigEndian.Uint16(answer[2:4]),
+				recordClass: binary.BigEndian.Uint16(answer[4:6]),
+				TTL:         binary.BigEndian.Uint32(answer[6:10]),
+				RDLength:    binary.BigEndian.Uint16(answer[10:12]),
+				RDData:      decodeIP(answer[12 : 12+binary.BigEndian.Uint16(answer[10:12])]),
+			}
+
+			resourceRecords = append(resourceRecords, answerResourceRecord)
+		}
+	}
+
+	return resourceRecords
 }
 
 func sendMessage(message []byte) []byte {
@@ -253,14 +300,12 @@ func main() {
 		sendingQuestion.packQuestion(),
 	)
 
-	fmt.Println("Sending bytes:", message)
-
 	response := sendMessage(message)
 
-	fmt.Println("Response bytes:", response)
+	unpackedResponses := unpackReturnMessage(response)
 
-	unpackedResponse := unpackReturnMessage(response)
-
-	fmt.Println(unpackedResponse)
+	for _, unpackedResponse := range unpackedResponses {
+		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData, "\n")
+	}
 
 }
