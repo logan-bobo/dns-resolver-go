@@ -41,7 +41,7 @@ type dnsHeader struct {
 
 func (header *dnsHeader) packHeader() []byte {
 	fieldsToPack := []uint16{header.id, header.flags, header.numQuestions, header.numAnswers, header.numAuthorityRR, header.numAdditionalRR}
-	packedFields := packuint16Fields(fieldsToPack)
+	packedFields := packUint16Fields(fieldsToPack)
 	return packedFields
 }
 
@@ -79,7 +79,7 @@ type resourceRecord struct {
 	RDData   net.IP
 }
 
-func packuint16Fields(fields []uint16) []byte {
+func packUint16Fields(fields []uint16) []byte {
 	var packedFields []byte
 
 	for _, field := range fields {
@@ -140,33 +140,25 @@ func decodeIP(IP []byte) net.IP {
 
 func uint16ToByteSlice(number uint16) []byte {
 	// uint16 is represented in 2 bytes
-	slice := make([]byte, 2)
-	slice[0] = byte(number >> 8)
-	slice[1] = byte(number)
+	buf := make([]byte, 2)
 
-	return slice
-}
+	binary.BigEndian.PutUint16(buf, number)
 
-func bytesToUint16(bytes []byte) uint16 {
-	if len(bytes) != 2 {
-		panic("Slice of invalid length passed to function, can not convert to uint16")
-	}
-
-	return uint16(bytes[0])<<8 | uint16(bytes[1])
+	return buf
 }
 
 // split this out
 func unpackReturnMessage(message []byte) []resourceRecord {
 	// The header is the first 12 bytes
-	headerbytes := message[:12]
+	headerBytes := message[:12]
 
 	returnHeader := dnsHeader{
-		id:              bytesToUint16(headerbytes[:2]),
-		flags:           bytesToUint16(headerbytes[2:4]),
-		numQuestions:    bytesToUint16(headerbytes[4:6]),
-		numAnswers:      bytesToUint16(headerbytes[6:8]),
-		numAuthorityRR:  bytesToUint16(headerbytes[8:10]),
-		numAdditionalRR: bytesToUint16(headerbytes[10:12]),
+		id:              binary.BigEndian.Uint16(headerBytes[:2]),
+		flags:           binary.BigEndian.Uint16(headerBytes[2:4]),
+		numQuestions:    binary.BigEndian.Uint16(headerBytes[4:6]),
+		numAnswers:      binary.BigEndian.Uint16(headerBytes[6:8]),
+		numAuthorityRR:  binary.BigEndian.Uint16(headerBytes[8:10]),
+		numAdditionalRR: binary.BigEndian.Uint16(headerBytes[10:12]),
 	}
 
 	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
@@ -189,19 +181,19 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 
 	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes
 
-	initalAnswer := message[12+questionBytes:]
+	initialAnswer := message[12+questionBytes:]
 
 	var answers [][]byte
 
-	seperator := len(initalAnswer)/int(returnHeader.numAnswers) - 1
+	separator := len(initialAnswer)/int(returnHeader.numAnswers) - 1
 	count := 0
 	part := 0
 
-	for index := range initalAnswer {
-		if count == seperator {
-			answers = append(answers, initalAnswer[part:index+1])
+	for index := range initialAnswer {
+		if count == separator {
+			answers = append(answers, initialAnswer[part:index+1])
 			count = 0
-			part += seperator + 1
+			part += separator + 1
 			continue
 		}
 
@@ -216,9 +208,9 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 		if binary.BigEndian.Uint16(answer[0:2]) > 49152 {
 			referenceDomain := binary.BigEndian.Uint16(answer[0:2]) - 49152 // The shift of 8bit (bytes) from start of the message the source domain this is our pointer.
 
-			fqdninitial := message[referenceDomain:]
+			fqdnInitial := message[referenceDomain:]
 
-			shift := fqdninitial[0]
+			shift := fqdnInitial[0]
 			fqdnBytes := 0
 
 			for shift != 0 {
