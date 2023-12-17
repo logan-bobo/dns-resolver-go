@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -43,6 +44,16 @@ func (header *dnsHeader) packHeader() []byte {
 	fieldsToPack := []uint16{header.id, header.flags, header.numQuestions, header.numAnswers, header.numAuthorityRR, header.numAdditionalRR}
 	packedFields := packUint16Fields(fieldsToPack)
 	return packedFields
+}
+
+func (header *dnsHeader) checkResponse() error {
+	var err error
+	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
+	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
+	if header.flags < 32767 {
+		err = errors.New("No response from DNS server")
+	}
+	return err
 }
 
 type dnsMessage struct {
@@ -147,8 +158,7 @@ func uint16ToByteSlice(number uint16) []byte {
 	return buf
 }
 
-// split this out
-func unpackReturnMessage(message []byte) []resourceRecord {
+func unpackResponseHeader(message []byte) dnsHeader {
 	// The header is the first 12 bytes
 	headerBytes := message[:12]
 
@@ -161,16 +171,16 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 		numAdditionalRR: binary.BigEndian.Uint16(headerBytes[10:12]),
 	}
 
-	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
-	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
-	if returnHeader.flags < 32767 {
-		panic("No response from DNS server")
-	}
+	return returnHeader
+}
+
+func extractAnswers(message []byte, responseAnswers int) [][]byte {
+	var answers [][]byte
 
 	// The question is the encoded host we sent so to work out the question bytes in the response its the length of our initial question + 4
 	// as a domain must always end with a 0 padding byte to indicate the end of the domain for example
 	// 3dns6google3com0 -> [3 100 110 115 6 103 111 111 103 108 101 3 99 111 109 0] we can find the first 0 byte at the end of the domain
-	returnQuestionInitial := message[12:]
+	returnQuestionInitial := message
 	shift := returnQuestionInitial[0]
 	questionBytes := 0
 
@@ -179,13 +189,11 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 		shift = returnQuestionInitial[questionBytes]
 	}
 
-	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes
+	questionBytes += 5 // We need to add the 0 padding byte at the end of the domain and the 4 extra bytes containing the IPv4 address
 
-	initialAnswer := message[12+questionBytes:]
+	initialAnswer := message[questionBytes:]
 
-	var answers [][]byte
-
-	separator := len(initialAnswer)/int(returnHeader.numAnswers) - 1
+	separator := len(initialAnswer)/responseAnswers - 1
 	count := 0
 	part := 0
 
@@ -200,13 +208,17 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 		count += 1
 	}
 
+	return answers
+}
+
+func unpackAnswers(message []byte, answers [][]byte) []resourceRecord {
 	var resourceRecords []resourceRecord
 
 	for _, answer := range answers {
 
 		// If the number is bigger than 49152 we know the first two bits are set and the message is compressed.
 		if binary.BigEndian.Uint16(answer[0:2]) > 49152 {
-			referenceDomain := binary.BigEndian.Uint16(answer[0:2]) - 49152 // The shift of 8bit (bytes) from start of the message the source domain this is our pointer.
+			referenceDomain := binary.BigEndian.Uint16(answer[0:2]) - 49152 // The shift of bytes  from start of the message the source domain this is our pointer.
 
 			fqdnInitial := message[referenceDomain:]
 
@@ -215,7 +227,7 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 
 			for shift != 0 {
 				fqdnBytes += int(shift) + 1
-				shift = returnQuestionInitial[fqdnBytes]
+				shift = message[12 + fqdnBytes]
 			}
 
 			fqdn := message[referenceDomain : (int(referenceDomain)+int(fqdnBytes))+1]
@@ -246,6 +258,7 @@ func sendMessage(message []byte) []byte {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	defer conn.Close()
 
 	buf := make([]byte, 64)
@@ -294,10 +307,20 @@ func main() {
 
 	response := sendMessage(message)
 
-	unpackedResponses := unpackReturnMessage(response)
+
+	responseHeader := unpackResponseHeader(response)
+	responseNoHeader := response[12:]
+
+	err := responseHeader.checkResponse()
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	answers := extractAnswers(responseNoHeader, int(responseHeader.numAnswers))
+
+	unpackedResponses := unpackAnswers(response, answers)
 
 	for _, unpackedResponse := range unpackedResponses {
 		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData)
 	}
-
 }
