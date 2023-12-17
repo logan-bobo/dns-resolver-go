@@ -288,7 +288,7 @@ func main() {
 	// Build out a static message, can be dynamic later...
 	sendingHeader := dnsHeader{
 		id:              22,  // static for now but will need to be unique later call generateQueryID()
-		flags:           256, // Setting the 'recursion desired' bit to 1 (8th bit) in uint16
+		flags:           0, // Turn off the recursion bit meaning we need to do a recursive resolve
 		numQuestions:    1,
 		numAnswers:      0,
 		numAuthorityRR:  0,
