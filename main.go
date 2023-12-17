@@ -250,7 +250,7 @@ func unpackAnswers(message []byte, answers [][]byte) []resourceRecord {
 
 func sendMessage(message []byte) []byte {
 	addr := net.UDPAddr{
-		IP:   net.IPv4(8, 8, 8, 8),
+		IP:   net.IPv4(198, 41, 0, 4), 
 		Port: 53,
 	}
 
