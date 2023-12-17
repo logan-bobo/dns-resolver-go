@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -70,16 +69,8 @@ func (message *dnsMessage) packMessage(header []byte, dnsQuestion []byte) []byte
 	return packedMessage
 }
 
-func (message *dnsMessage) generateHex(bytes []byte) string {
-	var hexString string
-
-	hexString = hex.EncodeToString(bytes)
-
-	return hexString
-}
-
 // https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.3
-type resourceRecord struct {
+type resourceRecordIPv4 struct {
 	// name is a compressed field see - https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.4
 	name        string
 	recordType  uint16
@@ -88,6 +79,16 @@ type resourceRecord struct {
 	TTL      uint32
 	RDLength uint16
 	RDData   net.IP
+}
+
+type resourceRecordNS struct {
+	// name is a compressed field see - https://datatracker.ietf.org/doc/html/rfc1035#section-4.1.4
+	name        string
+	recordType  uint16
+	recordClass uint16
+	TTL         uint32
+	RDLength    uint16
+	RDData      string
 }
 
 func packUint16Fields(fields []uint16) []byte {
@@ -103,6 +104,19 @@ func packUint16Fields(fields []uint16) []byte {
 func generateQueryID() int {
 	// 65535 is the largest number we can represent in 16bits (=2^16–1)
 	return rand.Intn(65535)
+}
+
+func domainLength(message []byte) int {
+	shift := message[0]
+	domainBytes := 0
+
+	for shift != 0 {
+		domainBytes += int(shift) + 1
+		shift = message[domainBytes]
+	}
+	
+	domainBytes++ // removes 0 pad
+	return domainBytes
 }
 
 func encodeHost(host string) []byte {
@@ -174,6 +188,43 @@ func unpackResponseHeader(message []byte) dnsHeader {
 	return returnHeader
 }
 
+func extractAuthorityAnswer(message []byte) []byte {
+	message = message[domainLength(message) + 4:]
+	return message
+}
+
+func unpackAuthorityAnswer(message []byte, answer []byte) resourceRecordNS {
+	// If the number is bigger than 49152 we know the first two bits are set and the message is compressed.
+	if binary.BigEndian.Uint16(answer[0:2]) > 49152 {
+		referenceDomain := binary.BigEndian.Uint16(answer[0:2]) - 49152 // The shift of bytes  from start of the message the source domain this is our pointer.
+
+		fqdnInitial := message[referenceDomain:]
+
+		shift := fqdnInitial[0]
+		fqdnBytes := 0
+
+		for shift != 0 {
+			fqdnBytes += int(shift) + 1
+			shift = message[12+fqdnBytes]
+		}
+
+		fqdn := message[referenceDomain : (int(referenceDomain)+int(fqdnBytes))+1]
+
+		answerResourceRecord := resourceRecordNS{
+			name:        decodeHost(fqdn),
+			recordType:  binary.BigEndian.Uint16(answer[2:4]),
+			recordClass: binary.BigEndian.Uint16(answer[4:6]),
+			TTL:         binary.BigEndian.Uint32(answer[6:10]),
+			RDLength:    binary.BigEndian.Uint16(answer[10:12]),
+			RDData:      decodeHost(answer[12 : 12+binary.BigEndian.Uint16(answer[10:12])]),
+		}
+
+		return answerResourceRecord
+	}
+	return resourceRecordNS{}
+}
+
+// refactor this function to use domainLength() to work out how many bytes the domain is domainLength should also return to the domain bytes
 func extractAnswers(message []byte, responseAnswers int) [][]byte {
 	var answers [][]byte
 
@@ -211,8 +262,8 @@ func extractAnswers(message []byte, responseAnswers int) [][]byte {
 	return answers
 }
 
-func unpackAnswers(message []byte, answers [][]byte) []resourceRecord {
-	var resourceRecords []resourceRecord
+func unpackAnswers(message []byte, answers [][]byte) []resourceRecordIPv4 {
+	var resourceRecords []resourceRecordIPv4
 
 	for _, answer := range answers {
 
@@ -227,12 +278,12 @@ func unpackAnswers(message []byte, answers [][]byte) []resourceRecord {
 
 			for shift != 0 {
 				fqdnBytes += int(shift) + 1
-				shift = message[12 + fqdnBytes]
+				shift = message[12+fqdnBytes]
 			}
 
 			fqdn := message[referenceDomain : (int(referenceDomain)+int(fqdnBytes))+1]
 
-			answerResourceRecord := resourceRecord{
+			answerResourceRecord := resourceRecordIPv4{
 				name:        decodeHost(fqdn),
 				recordType:  binary.BigEndian.Uint16(answer[2:4]),
 				recordClass: binary.BigEndian.Uint16(answer[4:6]),
@@ -250,7 +301,7 @@ func unpackAnswers(message []byte, answers [][]byte) []resourceRecord {
 
 func sendMessage(message []byte) []byte {
 	addr := net.UDPAddr{
-		IP:   net.IPv4(8, 8, 8, 8),
+		IP:   net.IPv4(198, 41, 0, 4),
 		Port: 53,
 	}
 
@@ -287,8 +338,8 @@ func main() {
 
 	// Build out a static message, can be dynamic later...
 	sendingHeader := dnsHeader{
-		id:              22,  // static for now but will need to be unique later call generateQueryID()
-		flags:           256, // Setting the 'recursion desired' bit to 1 (8th bit) in uint16
+		id:              22, // static for now but will need to be unique later call generateQueryID()
+		flags:           0,  // Turn off the recursion bit meaning we need to do a recursive resolve
 		numQuestions:    1,
 		numAnswers:      0,
 		numAuthorityRR:  0,
@@ -307,20 +358,26 @@ func main() {
 
 	response := sendMessage(message)
 
-
 	responseHeader := unpackResponseHeader(response)
 	responseNoHeader := response[12:]
-
 	err := responseHeader.checkResponse()
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	answers := extractAnswers(responseNoHeader, int(responseHeader.numAnswers))
+	if responseHeader.numAnswers == 0 && responseHeader.numAuthorityRR > 0 {
+		authorityAnswer := extractAuthorityAnswer(responseNoHeader)
+		unpackedAuthorityAnswer := unpackAuthorityAnswer(response, authorityAnswer)
 
-	unpackedResponses := unpackAnswers(response, answers)
+		fmt.Println(unpackedAuthorityAnswer.RDData)
 
-	for _, unpackedResponse := range unpackedResponses {
-		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData)
+	} else {
+		answers := extractAnswers(responseNoHeader, int(responseHeader.numAnswers))
+
+		unpackedResponses := unpackAnswers(response, answers)
+
+		for _, unpackedResponse := range unpackedResponses {
+			fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData)
+		}
 	}
 }
