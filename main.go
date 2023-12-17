@@ -147,8 +147,7 @@ func uint16ToByteSlice(number uint16) []byte {
 	return buf
 }
 
-// split this out
-func unpackReturnMessage(message []byte) []resourceRecord {
+func unpackResponseHeader(message []byte) dnsHeader {
 	// The header is the first 12 bytes
 	headerBytes := message[:12]
 
@@ -160,13 +159,12 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 		numAuthorityRR:  binary.BigEndian.Uint16(headerBytes[8:10]),
 		numAdditionalRR: binary.BigEndian.Uint16(headerBytes[10:12]),
 	}
+	
+	return returnHeader
+}
 
-	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
-	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
-	if returnHeader.flags < 32767 {
-		panic("No response from DNS server")
-	}
-
+// split this out
+func unpackReturnMessage(message []byte, responseAnswers int) []resourceRecord {
 	// The question is the encoded host we sent so to work out the question bytes in the response its the length of our initial question + 4
 	// as a domain must always end with a 0 padding byte to indicate the end of the domain for example
 	// 3dns6google3com0 -> [3 100 110 115 6 103 111 111 103 108 101 3 99 111 109 0] we can find the first 0 byte at the end of the domain
@@ -185,7 +183,7 @@ func unpackReturnMessage(message []byte) []resourceRecord {
 
 	var answers [][]byte
 
-	separator := len(initialAnswer)/int(returnHeader.numAnswers) - 1
+	separator := len(initialAnswer)/responseAnswers - 1
 	count := 0
 	part := 0
 
@@ -294,7 +292,15 @@ func main() {
 
 	response := sendMessage(message)
 
-	unpackedResponses := unpackReturnMessage(response)
+	responseHeader := unpackResponseHeader(response)
+
+	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
+	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
+	if responseHeader.flags < 32767 {
+		panic("No response from DNS server")
+	}
+
+	unpackedResponses := unpackReturnMessage(response, int(responseHeader.numAnswers))
 
 	for _, unpackedResponse := range unpackedResponses {
 		fmt.Println("Domain -", unpackedResponse.name, "IPv4 -", unpackedResponse.RDData)
