@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/binary"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -43,6 +44,16 @@ func (header *dnsHeader) packHeader() []byte {
 	fieldsToPack := []uint16{header.id, header.flags, header.numQuestions, header.numAnswers, header.numAuthorityRR, header.numAdditionalRR}
 	packedFields := packUint16Fields(fieldsToPack)
 	return packedFields
+}
+
+func (header *dnsHeader) checkResponse() error {
+	var err error
+	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
+	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
+	if header.flags < 32767 {
+		err = errors.New("No response from DNS server")
+	}
+	return err
 }
 
 type dnsMessage struct {
@@ -294,10 +305,9 @@ func main() {
 
 	responseHeader := unpackResponseHeader(response)
 
-	// check QR bit is set from flags it will be the first bit in the 16bits that make up flags
-	// we know if flags is larger than 2^15-1 the first bit is set (I think...) as 2^15-1 == 32767
-	if responseHeader.flags < 32767 {
-		panic("No response from DNS server")
+	err := responseHeader.checkResponse()
+	if err != nil {
+		panic(err)
 	}
 
 	unpackedResponses := unpackReturnMessage(response, int(responseHeader.numAnswers))
